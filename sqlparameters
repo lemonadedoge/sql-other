@@ -1,0 +1,127 @@
+USE [dbIMSMaster_Live_Final]
+GO
+/****** Object:  StoredProcedure [ssrs].[spRPTDamagedAndWastedReport]    Script Date: 12/18/2018 11:49:40 AM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- exec [ssrs].[spRPTDamagedAndWastedReport]
+ALTER PROCEDURE [ssrs].[spRPTDamagedAndWastedReport]
+	 @TenantId	Varchar(1000) =10011,--QIAGEN=10011
+	 @OrganizationId Varchar(1000) =-1,
+	 @MedicationId Varchar(1000)=-1 ,
+	 @UserId Varchar(1000) =10011, --this is the data update user or scraped user, not login user, this is the parameter need to be selected
+	 @StockStatus varchar(30) = -1	,
+	 @LoggedInUserId BIGINT =10011 , -- admin=10011, MigTest=10015	 
+	 @ReasonId Bigint =-1,	
+	 @DateFrom DATETIME=Null  ,
+	 @DateTo DATETIME =Null
+
+	 --@ModType VARCHAR(1)  =Null ,  unless we let user select Modtype, it is useless.
+	 --@LoggedInWSId	BIGINT = Null 
+AS
+BEGIN
+
+	If @DateFrom is Null 
+	set @DateFrom='01/01/1901'
+	If @DateTo is Null
+	set @DateTo=getdate()
+
+			DECLARE @TimeZoneID BIGINT
+			SELECT @TimeZoneID=TimeZoneID FROM Users WHERE USERID=@LoggedInUserId
+
+			SET @DateFrom = dbo.fnGetUTCDate(@TimeZoneID, @DateFrom)
+
+			SET @DateTo = dbo.fnGetUTCDate(@TimeZoneID, @DateTo)
+			SET @DateTo = DATEADD(DAY, 1, @DateTo)
+
+;With OrgTable as
+(  --
+	SELECT DISTINCT OrganizationId, OrganizationName+'-'+OrganizationRefNo as OrganizationName, TenantID, TenantName ,BTSymbol
+	FROM ssrs.fnGetUserOrganizationWorkstation(@LoggedInUserId,@TenantId, @OrganizationId,-1) -- wsid=-1
+	--WHERE BTSymbol = 'W'  -- this condition is not in IMS
+	-- get the organizationID for this loggedinuserid, he/she cannot look the data orther than his/her organization
+)
+
+,raw_data as
+(		SELECT 
+			ID.StockStatus as [status],		
+			ID.RFID,
+			OT.OrganizationName,
+			M.MedicationName, 
+			M.MedConcentration, 
+			M.MedVolume, 
+			ID.LotNum,
+			--ContainerNum ,	
+			--ID.Expdate,	
+			case 
+			when ID.ExpDate = '2100-01-01 00:00:00.000' then 'N/A'
+			Else [dbo].fnGetLocalizedDateStringDateTime(@TimeZoneID, ID.ExpDate,100) 
+			End as ExpDate,
+			case when ID.StockStatus = 'P' then  ID.UpdateDate
+				when ID.StockStatus = 'W' then ID.ScrapDate
+			End as DamageWasteDate,
+			case when ID.StockStatus = 'P' then ID.UpdateUserID
+				when ID.StockStatus = 'W' then ID.ScrapUserID
+			End as UserID,
+			OT.TenantId,
+			OT.TenantName 
+			,StockStatus
+			,Case when ID.StockStatus = 'P' then ID.DamagedReason
+				  when ID.StockStatus = 'W' then ID.ScrapReasonID
+			 end as ReasonId
+		FROM  dbo.InventoryDetail ID
+			INNER JOIN dbo.Medications M ON ID.MedicationID = M.MedicationID
+			INNER JOIN OrgTable OT ON OT.OrganizationId = ID.CreatedOrganizationID and ID.TenantId=OT.TenantId
+
+		WHERE 1=1
+		and (ID.StockStatus in (SELECT [Value] FROM ssrs.FnSplit(@StockStatus,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@StockStatus,',')) and ID.StockStatus in ('P','W')))  -- P=damaged, W=Wasted
+		AND (ID.UpdateUserID in ( SELECT [Value] FROM ssrs.FnSplit(@UserId,',')) or ID.ScrapUserID in (SELECT [Value] FROM ssrs.FnSplit(@UserId,',')) or '-1' in (SELECT [Value] FROM ssrs.FnSplit(@UserId,',')))
+		AND (ID.MedicationID in ( SELECT [Value] FROM ssrs.FnSplit(@MedicationId,',')) or '-1' in (SELECT [Value] FROM ssrs.FnSplit(@MedicationId,',')))
+		AND ((ID.UpdateDate >= @DateFrom and ID.UpdateDate < @DateTo)
+			or
+			(ID.ScrapDate >= @DateFrom and ID.ScrapDate < @DateTo))
+		And (@ReasonId=-1 or ID.ScrapReasonID=@ReasonId or ID.DamagedReason=@ReasonId)
+		and (@UserId=-1 or ID.UpdateUserID=@UserId or ID.ScrapUserID=@UserId)
+		
+
+)
+
+select 
+		a.[status],
+		a.OrganizationName,
+		concat(a.MedicationName, ' ', a.MedConcentration,' ',a.MedVolume) as ProductName, 
+		a.LotNum,
+		--a.ContainerNum ,	
+		Expdate,	
+		--dbo.fnGetLocalizedDateStringDateTime(@TimeZoneID,ExpDate,100) ExpDate,		
+		--a.EncodeDate,
+		dbo.fnGetLocalizedDateStringDateTime(@TimeZoneID,DamageWasteDate,100) DamageWasteDate,
+		U.LASTNAME+', '+ U.FIRSTNAME as UserName, 
+		a.TenantName,
+		r.ReasonDescription as Reason,
+		count(RFID) as QTY
+from raw_data a
+Inner join reasons r on a.ReasonId=r.ReasonID
+Inner join dbo.Users U ON U.USERID = a.UserID
+where 1=1
+AND (a.UserID in ( @UserId) or @UserID=-1)
+AND (a.DamageWasteDate >= @DateFrom)
+AND (a.DamageWasteDate < @DateTo)
+AND (a.ReasonId = @ReasonId or @ReasonId=-1)
+group by 				
+		[status],
+		OrganizationName,
+		MedicationName, 
+		MedConcentration, 
+		MedVolume, 
+		LotNum,
+		--ContainerNum ,
+		Expdate,				
+		DamageWasteDate,
+		LASTNAME, 
+		FIRSTNAME,
+		TenantName,
+		ReasonDescription	
+
+End
