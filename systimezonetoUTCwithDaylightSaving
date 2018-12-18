@@ -1,0 +1,273 @@
+USE [IGEnterprise]
+GO
+/****** Object:  StoredProcedure [ssrs].[spInventoryDispositionReport]    Script Date: 12/18/2018 11:21:32 AM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+ALTER PROCEDURE [ssrs].[spInventoryDispositionReport]
+@ClientId varchar(1000)='-1',
+@OrganizationId varchar(1000)='-1'	,
+@UserId varchar(max)='-2' , 
+@Reason varchar(1000)='Expired',
+@EnclosureId varchar(max)='-1' , 
+@ProductId varchar(max)='-1',
+@LoggedInUserId INT=0,
+--@StatusId varchar(100)='2',
+@LotNum varchar(100)='500471',
+@DateFrom DATETIME ='10/1/2018'   ,
+@DateTo DATETIME = '11/1/2018' 
+ 
+
+
+AS
+BEGIN
+--Declare @ClientId varchar(1000)='-1'
+--Declare @OrganizationId varchar(1000)='-1'	
+--Declare @UserId varchar(1000)='-2'  
+--Declare @Reason varchar(1000)='Expired'
+--Declare @EnclosureId varchar(max)='-1'  
+--Declare @DateFrom DATETIME = '10/1/2018' 
+--Declare @DateTo DATETIME = '11/1/2018' 
+--Declare @ProductId varchar(max)='-1'
+--Declare @LoggedInUserId INT=0
+--Declare @Status varchar(100)
+ 
+
+	If @DateFrom is Null
+	set @DateFrom='01/01/1901'
+	--If @DateTo is Null
+	--set @DateTo=CONVERT([datetime2],'9999-12-31 23:59:59.9999999')	
+	--Else SET @DateTo = DATEADD(DAY, 1, @DateTo)
+
+
+
+	DECLARE @TimeZone varchar(100)
+	SELECT @TimeZone = UserTimeZone FROM users.Users WHERE USERID = @LoggedInUserId
+
+
+	--declare @datetimeoffset nvarchar(12)
+
+ --   set @datetimeoffset=(select case when left(current_utc_offset,1)='+' then replace(current_utc_offset , '+','-')
+	--							   else replace(current_utc_offset , '-','+')
+	--							end as current_utc_offset
+	--					from sys.time_zone_info
+	--					where name=@TimeZone
+	--					)
+
+	--set @DateFrom = SWITCHOFFSET(@DateFrom,@datetimeoffset)
+	--set @DateTo = SWITCHOFFSET(@DateTo,@datetimeoffset)
+	set @DateFrom = convert(datetime,[Tzdb].[LocalToUtc](@DateFrom,@TimeZone,1,1))
+	set @DateTo = Isnull(convert(datetime,[Tzdb].[LocalToUtc](DATEADD(DAY, 1, @DateTo),@TimeZone,1,1)),CONVERT([datetime2],'9999-12-31 23:59:59.9999999'))
+
+
+
+
+
+;with user_org as
+(select distinct [UserOrganizationOrganizationId] 
+from map.UserOrganization 
+where (UserOrganizationUserId=@LoggedInUserId or @LoggedInUserId=0)
+AND ([UserOrganizationOrganizationId] in (SELECT [Value] FROM ssrs.FnSplit(@OrganizationId,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@OrganizationId,','))))   -- customer ask to add this filter	
+)
+		 
+,Expired_Item as
+(  
+select 
+		[ClientName] as Organization
+		,[OrganizationName] as Facility
+		,[EnclosureName] as [Enclosure]
+		,[EnclosureId] as [EnclosureId]
+		,ProductItemStatusTypeName as [Status]
+		,ProductItemStatusTypeId as [StatusId]
+		,[ProductName] as Product
+		,'Expired' as Reason
+		,Convert(datetime,[Tzdb].[UtcToLocal]([ProductBatchExpirationDate],@TimeZone)) as DispositionDate  -- DispositionDate=ExpDate
+		,[ProductBatchIdentifier] as Lotnum
+		,Convert(datetime,[Tzdb].[UtcToLocal]([ProductBatchExpirationDate],@TimeZone)) as ExpDate
+		,right([ProductItemRfid],6) as TagID
+		--,1 as Qty
+		,Convert(datetime,[Tzdb].[UtcToLocal]([ProductItemStatusEffectiveFromDate],@TimeZone)) as EncodeDate
+		,concat( u.[UserLastName],', ',u.[UserFirstName]) as [User]
+		,row_number() over(partition by [ProductItemRfid] order by ps.[ProductItemStatusEffectiveFromDate] desc) as num_e
+from [product].[ProductItem] pitem
+inner join [product].[ProductItemStatus] ps on pitem.[ProductItemId]=ps.[ProductItemStatusProductItemId]
+inner join [lookup].[ProductItemStatusType] pst on pst.ProductItemStatusTypeId=ps.[ProductItemStatusProductItemStatusTypeId]
+inner join [map].[ProductItemStatusEnclosure] se on se.[ProductItemStatusEnclosureProductItemStatusId]=ps.ProductItemStatusId
+inner join [enclosure].[Enclosure] e on e.EnclosureId=se.[ProductItemStatusEnclosureEnclosureId]
+inner join [map].[OrganizationEnclosure] oe on oe.[OrganizationEnclosureEnclosureId]=e.[EnclosureId]
+inner join [org].[Organization] o on o.[OrganizationId]=oe.[OrganizationEnclosureOrganizationId]
+inner join [map].[ProductBatchProductItem] pbp on pbp.[ProductBatchProductItemProductItemId]=pitem.ProductItemId
+inner join [product].[ProductBatch] pb on pb.[ProductBatchId]=pbp.[ProductBatchProductItemProductBatchId] 
+inner join [map].[ClientOrganization] co on co.[ClientOrganizationOrganizationId]=o.[OrganizationId]
+inner join [client].[Client] c on c.[ClientId]=co.ClientOrganizationClientId
+inner join [product].[Product] p on p.[ProductId]=pitem.ProductItemProductId
+inner join [users].[Users] u on u.[UserId]=ps.[ProductItemStatusUserId]
+inner join user_org uo on o.OrganizationId=uo.UserOrganizationOrganizationId
+where 1=1		
+AND ('Expired' in (SELECT [Value] FROM ssrs.FnSplit(@Reason,',')))
+--AND (EnclosureId in (SELECT [Value] FROM ssrs.FnSplit(@EnclosureId,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@EnclosureId,','))))   -- customer ask to add this filter					
+AND (ProductId in (SELECT [Value] FROM ssrs.FnSplit(@ProductId,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@ProductId,','))))   -- customer ask to add this filter		
+AND (ClientId in (SELECT [Value] FROM ssrs.FnSplit(@ClientId,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@ClientId,','))))   -- customer ask to add this filter		
+AND ([UserId] in (SELECT [Value] FROM ssrs.FnSplit(@UserId,',')) or ('-2' in (SELECT [Value] FROM ssrs.FnSplit(@UserId,','))))   -- customer ask to add this filter		 
+and ([ProductBatchIdentifier] like '%'+@LotNum+'%' or @LotNum='')
+and ([ProductBatchExpirationDate] >= @DateFrom)
+and ([ProductBatchExpirationDate] < @DateTo)
+)
+
+--select * 
+--from Expired_Item
+--where num_e=1
+
+,Recalled_Item as
+(
+select 
+		[ClientName] as Organization
+		,[OrganizationName] as Facility
+		,[EnclosureName] as [Enclosure]
+		,[EnclosureId] as [EnclosureId]
+		,[ProductName] as Product
+		,ProductItemStatusTypeName as [Status]
+		,ProductItemStatusTypeId as [StatusId]
+		,'Recalled' as Reason
+		,Convert(datetime,[Tzdb].[UtcToLocal]([ProductBatchRecalledDate],@TimeZone)) as DispositionDate  -- should I use [ProductBatchRecalledDate] or ProductItemStatusEffectiveFromDate ??
+		,[ProductBatchIdentifier] as Lotnum
+		,Convert(datetime,[Tzdb].[UtcToLocal]([ProductBatchExpirationDate],@TimeZone)) as ExpDate
+		,right([ProductItemRfid],6) as TagID
+		,1 as Qty
+		,Convert(datetime,[Tzdb].[UtcToLocal]([ProductItemStatusEffectiveFromDate],@TimeZone)) as EncodeDate
+		,concat( u.[UserLastName],', ',u.[UserFirstName]) as [User]
+		,row_number() over(partition by [ProductItemRfid] order by ps.[ProductItemStatusEffectiveFromDate] desc) as num_r
+from [product].[ProductItem] pitem
+inner join [product].[ProductItemStatus] ps on pitem.[ProductItemId]=ps.[ProductItemStatusProductItemId]
+inner join [lookup].[ProductItemStatusType] pst on pst.ProductItemStatusTypeId=ps.[ProductItemStatusProductItemStatusTypeId]
+inner join [map].[ProductItemStatusEnclosure] se on se.[ProductItemStatusEnclosureProductItemStatusId]=ps.ProductItemStatusId
+inner join [enclosure].[Enclosure] e on e.EnclosureId=se.[ProductItemStatusEnclosureEnclosureId]
+inner join [map].[OrganizationEnclosure] oe on oe.[OrganizationEnclosureEnclosureId]=e.[EnclosureId]
+inner join [org].[Organization] o on o.[OrganizationId]=oe.[OrganizationEnclosureOrganizationId]
+inner join [map].[ProductBatchProductItem] pbp on pbp.[ProductBatchProductItemProductItemId]=pitem.ProductItemId
+inner join [product].[ProductBatch] pb on pb.[ProductBatchId]=pbp.[ProductBatchProductItemProductBatchId] 
+inner join [map].[ClientOrganization] co on co.[ClientOrganizationOrganizationId]=o.[OrganizationId]
+inner join [client].[Client] c on c.[ClientId]=co.ClientOrganizationClientId
+inner join [product].[Product] p on p.[ProductId]=pitem.ProductItemProductId
+inner join [users].[Users] u on u.[UserId]=ps.[ProductItemStatusUserId]
+inner join user_org uo on o.OrganizationId=uo.UserOrganizationOrganizationId
+
+where 1=1
+AND ('Recalled' in (SELECT [Value] FROM ssrs.FnSplit(@Reason,',')))
+and [ProductBatchRecalled] ='1'
+--AND (EnclosureId in (SELECT [Value] FROM ssrs.FnSplit(@EnclosureId,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@EnclosureId,','))))  		
+--AND (pst.ProductItemStatusTypeId in (SELECT [Value] FROM ssrs.FnSplit(@Status,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@Status,','))))   -- customer ask to add this filter			
+AND (ProductId in (SELECT [Value] FROM ssrs.FnSplit(@ProductId,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@ProductId,','))))   		
+AND (ClientId in (SELECT [Value] FROM ssrs.FnSplit(@ClientId,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@ClientId,','))))   	
+AND ([UserId] in (SELECT [Value] FROM ssrs.FnSplit(@UserId,',')) or ('-2' in (SELECT [Value] FROM ssrs.FnSplit(@UserId,','))))  	
+and ([ProductBatchIdentifier] like '%'+@LotNum+'%' or @LotNum='')
+and ([ProductBatchRecalledDate]>= @DateFrom)
+and ([ProductBatchRecalledDate] < @DateTo)
+)
+
+
+,Wasted_Item as
+(
+select 
+		[ClientName] as Organization
+		,[OrganizationName] as Facility
+		,[EnclosureName] as [Enclosure]
+		,[EnclosureId] as [EnclosureId]
+		,ProductItemStatusTypeName as [Status]
+		,ProductItemStatusTypeId as [StatusId]
+		,[ProductName] as Product
+		,'Voided' as Reason
+		,Convert(datetime,[Tzdb].[UtcToLocal]([ProductItemStatusEffectiveFromDate],@TimeZone)) as DispositionDate
+		,[ProductBatchIdentifier] as Lotnum
+		,Convert(datetime,[Tzdb].[UtcToLocal]([ProductBatchExpirationDate],@TimeZone)) as ExpDate
+		,right([ProductItemRfid],6) as TagID
+		,1 as Qty
+		,Convert(datetime,[Tzdb].[UtcToLocal]([ProductItemStatusEffectiveFromDate],@TimeZone)) as EncodeDate
+		,concat( u.[UserLastName],', ',u.[UserFirstName]) as [User]
+		,row_number() over(partition by [ProductItemRfid] order by ps.[ProductItemStatusEffectiveFromDate] desc) as num_w
+from [product].[ProductItem] pitem
+inner join [product].[ProductItemStatus] ps on pitem.[ProductItemId]=ps.[ProductItemStatusProductItemId]
+inner join [lookup].[ProductItemStatusType] pst on pst.ProductItemStatusTypeId=ps.[ProductItemStatusProductItemStatusTypeId]
+inner join [map].[ProductItemStatusEnclosure] se on se.[ProductItemStatusEnclosureProductItemStatusId]=ps.ProductItemStatusId
+inner join [enclosure].[Enclosure] e on e.EnclosureId=se.[ProductItemStatusEnclosureEnclosureId]
+inner join [map].[OrganizationEnclosure] oe on oe.[OrganizationEnclosureEnclosureId]=e.[EnclosureId]
+inner join [org].[Organization] o on o.[OrganizationId]=oe.[OrganizationEnclosureOrganizationId]
+inner join [map].[ProductBatchProductItem] pbp on pbp.[ProductBatchProductItemProductItemId]=pitem.ProductItemId
+inner join [product].[ProductBatch] pb on pb.[ProductBatchId]=pbp.[ProductBatchProductItemProductBatchId] 
+inner join [map].[ClientOrganization] co on co.[ClientOrganizationOrganizationId]=o.[OrganizationId]
+inner join [client].[Client] c on c.[ClientId]=co.ClientOrganizationClientId
+inner join [product].[Product] p on p.[ProductId]=pitem.ProductItemProductId
+inner join [users].[Users] u on u.[UserId]=ps.[ProductItemStatusUserId]
+inner join user_org uo on o.OrganizationId=uo.UserOrganizationOrganizationId
+where 1=1
+AND ('Voided' in (SELECT [Value] FROM ssrs.FnSplit(@Reason,',')))
+and pst.[ProductItemStatusTypeName] = 'Voided'
+--AND (EnclosureId in (SELECT [Value] FROM ssrs.FnSplit(@EnclosureId,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@EnclosureId,','))))   		
+--AND (pst.ProductItemStatusTypeId in (SELECT [Value] FROM ssrs.FnSplit(@Status,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@Status,','))))   			
+AND (ProductId in (SELECT [Value] FROM ssrs.FnSplit(@ProductId,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@ProductId,','))))   		
+AND (ClientId in (SELECT [Value] FROM ssrs.FnSplit(@ClientId,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@ClientId,',')))) 
+AND ([UserId] in (SELECT [Value] FROM ssrs.FnSplit(@UserId,',')) or ('-2' in (SELECT [Value] FROM ssrs.FnSplit(@UserId,','))))   
+and ([ProductBatchIdentifier] like '%'+@LotNum+'%' or @LotNum='')
+and ([ProductItemStatusEffectiveFromDate] >= @DateFrom)
+and ([ProductItemStatusEffectiveFromDate] < @DateTo)
+)	
+
+select 
+		Organization
+		,Facility
+		,[Enclosure]
+		,Product
+		,Reason
+		,DispositionDate
+		,Lotnum
+		,ExpDate
+		,TagID
+		,1 as Qty
+		,EncodeDate
+		,[User]	
+		,[Status]
+from Expired_Item
+where num_e=1
+--and [StatusId] in (SELECT [Value] FROM ssrs.FnSplit(@StatusId,','))
+AND (EnclosureId in (SELECT [Value] FROM ssrs.FnSplit(@EnclosureId,',')))
+union
+select 
+		Organization
+		,Facility
+		,[Enclosure]
+		,Product
+		,Reason
+		,DispositionDate
+		,Lotnum
+		,ExpDate
+		,TagID
+		,1 as Qty
+		,EncodeDate
+		,[User]
+		,[Status]
+from Recalled_Item
+where num_r=1
+--and [StatusId] in (SELECT [Value] FROM ssrs.FnSplit(@StatusId,','))
+AND (EnclosureId in (SELECT [Value] FROM ssrs.FnSplit(@EnclosureId,',')))
+union
+select 
+		Organization
+		,Facility
+		,[Enclosure]
+		,Product
+		,Reason
+		,DispositionDate
+		,Lotnum
+		,ExpDate
+		,TagID
+		,1 as Qty
+		,EncodeDate
+		,[User]
+		,[Status]
+from Wasted_Item
+where num_w=1
+--and [StatusId] in (SELECT [Value] FROM ssrs.FnSplit(@StatusId,','))
+AND (EnclosureId in (SELECT [Value] FROM ssrs.FnSplit(@EnclosureId,',')))
+
+END
