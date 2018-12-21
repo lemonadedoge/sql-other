@@ -1,0 +1,26 @@
+getMaxSBP <- function(dat){
+    ID_foo <- sub("x", "", dat$id)
+    Sex <- toupper(substr(ID_foo, nchar(ID_foo), nchar(ID_foo)))
+    newID <- substr(ID_foo, 1, nchar(ID_foo)-1)
+    newsbp <-dat$sbp
+    newsbp [newsbp > 300] <- NA
+
+    newDat <- data.frame(newID = newID, Sex = Sex, visit = dat$visit, sbp = newsbp)
+    newDat_split <- split(newDat, newDat$newID)
+
+    result <- data.frame()
+    for (i in 1:length(newDat_split)){
+        one <- newDat_split[[i]]
+        if (nrow(one) ==1){
+            oneDat <- one
+        }else{
+            maxIndex <- which(one$sbp == max(one$sbp, na.rm=T))[1]
+            oneDat <- one[maxIndex,,drop=F]
+        }
+        result <- rbind(result, oneDat)
+    }
+    names(result)[3:4] <- paste0("max", names(result)[3:4])
+    rownames(result) <- NULL
+    return(result)
+
+ }
