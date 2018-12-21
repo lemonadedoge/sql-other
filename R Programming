@@ -14,7 +14,7 @@ getMaxSBP <- function(dat){
         if (nrow(one) ==1){
             oneDat <- one
         }else{
-            maxIndex <- which(one$sbp == max(one$sbp, na.rm=T))[1]
+            maxIndex <- which(one$sbp == max(one$sbp, na.rm=T))[1] ##index an element in vector
             oneDat <- one[maxIndex,,drop=F]
         }
         result <- rbind(result, oneDat)
