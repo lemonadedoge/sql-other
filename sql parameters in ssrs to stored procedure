@@ -1,0 +1,176 @@
+
+USE [IGEnterprise]
+GO
+/****** Object:  StoredProcedure [ssrs].[spExpirationDatesReportLucy]    Script Date: 12/28/2018 9:00:42 AM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+ALTER PROCEDURE [ssrs].[spExpirationDatesReportLucy] 
+	@YEAR varchar(max),
+	@MONTH varchar(max),
+	@DAY varchar(max),
+	@LoggedInUserId INT=0,
+	@ClientId varchar(1000)='-1',
+	@OrganizationId varchar(1000) ='-1'	,
+	@EnclosureId varchar(max) ='-1'  ,
+	@Status varchar(100)=-1,
+	@EquivalencyGroupId varchar(max) ='-1' 
+--@DateFrom DATETIME = '10/01/2018' ,  
+--@DateTo DATETIME = '10/31/2018',
+
+
+AS
+BEGIN
+
+--test values
+--Declare @YEAR varchar(max)='2015'
+--Declare @MONTH varchar(max)='12'
+--Declare @DAY varchar(max)='31'
+--Declare @LoggedInUserId INT=0
+--Declare @ClientId varchar(1000)='-1'
+--Declare @OrganizationId varchar(1000) ='-1' 
+--Declare @EnclosureId varchar(max) ='-1'  
+--Declare @Status varchar(100)='-1'
+--Declare @EquivalencyGroupId varchar(max) ='-1' 
+
+declare @TimeZone varchar(100)
+SELECT @TimeZone = UserTimeZone FROM users.Users WHERE USERID = @LoggedInUserId
+
+
+	--set @DateFrom = convert(datetime,[Tzdb].[LocalToUtc](@DateFrom,@TimeZone,1,1))
+	--set @DateTo = Isnull(convert(datetime,[Tzdb].[LocalToUtc](DATEADD(DAY, 1, @DateTo),@TimeZone,1,1)),CONVERT([datetime2],'9999-12-31 23:59:59.9999999'))
+	--set @DateTo = convert(datetime,[Tzdb].[LocalToUtc](@DateTo,@TimeZone,1,1))
+
+;with user_org as
+(select distinct [UserOrganizationOrganizationId] 
+from map.UserOrganization 
+where (UserOrganizationUserId=@LoggedInUserId or @LoggedInUserId=0)
+AND ([UserOrganizationOrganizationId] in (SELECT [Value] FROM ssrs.FnSplit(@OrganizationId,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@OrganizationId,','))))   -- customer ask to add this filter	
+
+)
+--params from ssrs
+,d as
+(SELECT DATEFROMPARTS(T1.Value, T2.Value, T3.Value) datefrompt
+FROM STRING_SPLIT(@YEAR, ',') T1 
+     CROSS APPLY
+     STRING_SPLIT(@MONTH, ',') T2
+     CROSS APPLY
+     STRING_SPLIT(@DAY, ',') T3
+)
+--set date to utc
+,dates1 as
+(
+select Isnull(convert(date,[Tzdb].[LocalToUtc](DATEADD(DAY, 1, datefrompt),@TimeZone,1,1))
+,CONVERT([datetime2],'9999-12-31 23:59:59.9999999')) utcdate
+from d
+)
+,data_expired as
+(
+select
+[OrganizationName] as Facility
+,ProductItemStatusTypeName as [Status]
+,ProductItemStatusTypeId as [StatusId]
+,e.[EnclosureName] as [Enclosure]
+,e.[EnclosureId] as [EnclosureId]
+,[ProductName] as Product
+,[ProductBatchIdentifier] as Lotnum
+,isnull(pieo.ProductItemExpirationOverrideExpirationDate, PB.ProductBatchExpirationDate) as ExpDate
+--,Convert(datetime,[Tzdb].[UtcToLocal](ProductBatchExpirationDate,@TimeZone)) as ExpDate
+--,right([ProductItemRfid],6) as TagID
+,[ProductItemRfid]
+,ps.[ProductItemStatusEffectiveFromDate]  as EventDate
+--,row_number() over(partition by [ProductItemRfid] order by ps.[ProductItemStatusEffectiveFromDate] desc) as num
+from [product].[ProductItem] pitem
+inner join [product].[ProductItemStatus] ps on pitem.[ProductItemId]=ps.[ProductItemStatusProductItemId]
+inner join [lookup].[ProductItemStatusType] pst on pst.ProductItemStatusTypeId=ps.[ProductItemStatusProductItemStatusTypeId]
+inner join [map].[ProductItemStatusEnclosure] se on se.[ProductItemStatusEnclosureProductItemStatusId]=ps.ProductItemStatusId
+inner join [enclosure].[Enclosure] e on e.EnclosureId=se.[ProductItemStatusEnclosureEnclosureId]
+inner join [map].[OrganizationEnclosure] oe on oe.[OrganizationEnclosureEnclosureId]=e.[EnclosureId]
+inner join [org].[Organization] o on o.[OrganizationId]=oe.[OrganizationEnclosureOrganizationId]
+inner join [map].[ProductBatchProductItem] pbp on pbp.[ProductBatchProductItemProductItemId]=pitem.ProductItemId
+inner join [product].[ProductBatch] pb on pb.[ProductBatchId]=pbp.[ProductBatchProductItemProductBatchId]
+
+inner join [map].[ClientOrganization] co on co.[ClientOrganizationOrganizationId]=o.[OrganizationId]
+inner join [client].[Client] c on c.[ClientId]=co.ClientOrganizationClientId
+inner join [product].[Product] p on p.[ProductId]=pitem.ProductItemProductId
+inner join map.EquivalencyGroupProduct qgp on p.ProductId=qgp.EquivalencyGroupProductProductId
+inner join product.EquivalencyGroup eg on qgp.EquivalencyGroupProductEquivalencyGroupId=eg.EquivalencyGroupId
+left join [product].[ProductItemExpirationOverride] pieo on pitem.ProductItemId=pieo.ProductItemExpirationOverrideProductItemId
+--inner join [users].[Users] u on u.[UserId]=ps.[ProductItemStatusUserId]
+inner join user_org uo on o.OrganizationId=uo.UserOrganizationOrganizationId
+inner join dates1 d on d.utcdate=convert(date, pb.[ProductBatchExpirationDate])
+where 1=1
+--AND (EnclosureId in (SELECT [Value] FROM ssrs.FnSplit(@EnclosureId,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@EnclosureId,','))))  	
+--AND (pst.ProductItemStatusTypeId in (SELECT [Value] FROM ssrs.FnSplit(@Status,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@Status,','))))   -- this condition off becasue even if @Status='Approved' we still need 'Loaded' info			
+AND (EquivalencyGroupId in (SELECT [Value] FROM ssrs.FnSplit(@EquivalencyGroupId,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@EquivalencyGroupId,','))))  		
+AND (ClientId in (SELECT [Value] FROM ssrs.FnSplit(@ClientId,',')) or ('-1' in (SELECT [Value] FROM ssrs.FnSplit(@ClientId,','))))   	
+and ps.[ProductItemStatusEffectiveThruDate]	>'9999-12-30'
+--and [ProductBatchIdentifier]='6108603'
+--and [EnclosureName]='Anesthesia LEFT 14'
+--and pst.ProductItemStatusTypeName in ('Loaded') --,'Approved')
+--and pst.ProductItemStatusTypeId in (1,2,3,4,5)
+--and right([ProductItemRfid],6) ='AF7E9A'
+--order by TagId,status
+)
+
+,data_expired_laststatus as
+(
+select 
+Facility
+,[Status]
+,[StatusId]
+,[Enclosure]
+,Product
+,Lotnum
+,ExpDate
+--,right([ProductItemRfid],6) as TagID
+,[ProductItemRfid]
+, EventDate
+from data_expired
+where 1=1
+AND (EnclosureId in (SELECT [Value] FROM ssrs.FnSplit(@EnclosureId,',')) )
+)
+
+--,data_expired_removed as
+--(
+--select distinct
+--pitem.[ProductItemRfid]
+--from [product].[ProductItem] pitem
+--inner join [product].[ProductItemStatus] ps on pitem.[ProductItemId]=ps.[ProductItemStatusProductItemId]
+--inner join [lookup].[ProductItemStatusType] pst on pst.ProductItemStatusTypeId=ps.[ProductItemStatusProductItemStatusTypeId]
+--inner join [map].[ProductBatchProductItem] pbp on pbp.[ProductBatchProductItemProductItemId]=pitem.ProductItemId
+--inner join [product].[ProductBatch] pb on pb.[ProductBatchId]=pbp.[ProductBatchProductItemProductBatchId] 
+--inner join data_expired_laststatus dl on pitem.ProductItemRfid=dl.ProductItemRfid 
+--where 1=1	
+--and ([ProductBatchExpirationDate] >= @DateFrom)
+--and ([ProductBatchExpirationDate] < @DateTo)
+----and [ProductBatchIdentifier]='6108603'
+----and [EnclosureName]='Anesthesia LEFT 14'
+--and pst.ProductItemStatusTypeName in ('Removed','Voided')
+--and ps.ProductItemStatusEffectiveThruDate >= GETUTCDATE() --- current removed, the time the report run.
+--)
+----select * from data_expired_loadandapprove_removed
+
+---  include recalled 
+
+select 
+Facility
+,[Status]
+,[Enclosure]
+,Product
+,Lotnum
+--,ExpDate
+,Convert(datetime,[Tzdb].[UtcToLocal](ExpDate,@TimeZone)) as ExpDate
+,right(dl.[ProductItemRfid],6) as TagID
+,1 as Qty
+from data_expired_laststatus dl
+--left join data_expired_removed dm on dl.ProductItemRfid=dm.ProductItemRfid
+where 1=1
+and [StatusId] in (SELECT [Value] FROM ssrs.FnSplit(@Status,','))
+--and dm.ProductItemRfid is null
+--and right(dl.[ProductItemRfid],6) ='AF7E9A'
+
+
+
+END
