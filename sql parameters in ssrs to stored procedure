@@ -1,4 +1,41 @@
 
+--ssrs queries
+;WITH   cte(yr) AS     
+(
+	SELECT 1901
+    UNION ALL
+    SELECT yr + 1
+    FROM   cte
+    WHERE  yr < year(getdate()) 
+)
+--select yr from cte
+--order by 1 desc
+--OPTION (maxrecursion 0)
+
+,months(MonthNumber) AS
+(
+	SELECT 0
+	UNION ALL
+	SELECT MonthNumber+1 
+	FROM months
+	WHERE MonthNumber < 11
+)
+SELECT DATENAME(MONTH,DATEADD(MONTH,-MonthNumber,GETDATE())) AS mnstr
+,DATEPART(month,DATEADD(MONTH,-MonthNumber,GETDATE())) as mnnum
+FROM months;
+
+DECLARE @START_DATE DATE = CAST(@YEAR AS VARCHAR(4)) + '-' + RIGHT('0' + CAST(@MONTH AS VARCHAR(2)), 2) + '-' + '01'
+DECLARE @END_DATE  DATE  = DATEADD(DAY, -1, DATEADD(MONTH, 1, @START_DATE))
+;with GETDATES(THEDATE) AS  
+    (  
+        SELECT @START_DATE
+        UNION ALL  
+        SELECT DATEADD(DAY,1, THEDATE) FROM GETDATES  
+        WHERE THEDATE < @END_DATE  
+)
+SELECT DAY(GETDATES.THEDATE) AS DAYS FROM GETDATES 
+OPTION (maxrecursion 0)
+
 USE [IGEnterprise]
 GO
 /****** Object:  StoredProcedure [ssrs].[spExpirationDatesReportLucy]    Script Date: 12/28/2018 9:00:42 AM ******/
