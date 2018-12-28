@@ -1,0 +1,16 @@
+#initialize total
+total=0.0
+#ask for inputs
+budget=float(input("Plz Enter amount that you budgeted for a month: "))
+expense=float(input("Plz Enter 1st expense - to quit enter 0: "))
+while expense!=0:
+# Add the expense to the accumulator.
+    total += expense
+    expense=float(input("Plz Enter a expense - to quit enter 0: "))
+#display results
+if total>budget:
+    print("You are over-budget by",total-budget)
+elif total<budget:
+    print("You have",budget-total,"to spare")
+else:
+        print("Your budget is equal to expense")
