@@ -1,11 +1,11 @@
 SELECT
     fk.name 'FK Name',
-    tp.name 'par.parlevel',
-    cp.name, cp.column_id,
+    tr.name 'par.parlevel',
+    cr.name, cp.column_id,
     tr.name 'product.EquivalencyGroup',
     cr.name, cr.column_id,
-	tr.name 'par.pargroup',
-    cr.name, cr.column_id
+	tp.name 'par.pargroup',
+    cp.name, cr.column_id
 FROM 
     sys.foreign_keys fk
 INNER JOIN 
