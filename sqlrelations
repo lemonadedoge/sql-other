@@ -18,7 +18,6 @@ INNER JOIN
     sys.columns cp ON fkc.parent_column_id = cp.column_id AND fkc.parent_object_id = cp.object_id
 INNER JOIN 
     sys.columns cr ON fkc.referenced_column_id = cr.column_id AND fkc.referenced_object_id = cr.object_id
-where fk.name  LIKE '%parlevel%' or  fk.name   LIKE '%EquivalencyGroup%'
+where fk.name  LIKE '%organization'
 ORDER BY
     fk.name
-
